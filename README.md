@@ -18,12 +18,20 @@ A classic Missile Command style tower defense game built with React, Vite, and T
 2. Go to [Vercel](https://vercel.com) and import your repository.
 3. Vercel will automatically detect the Vite project and deploy it.
 
-### Local Development
+### Local Development with VS Code
 
-```bash
-npm install
-npm run dev
-```
+1. **Clone the repository** to your local machine.
+2. **Open the folder** in VS Code.
+3. **Install Dependencies**: Open the integrated terminal and run:
+   ```bash
+   npm install
+   ```
+4. **Run the App**:
+   ```bash
+   npm run dev
+   ```
+5. **Open in Browser**: The app will be available at `http://localhost:3000`.
+6. **Debug**: You can use the "Launch Chrome" configuration in the Run and Debug tab (F5).
 
 ## How to Play
 

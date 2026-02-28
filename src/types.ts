@@ -44,12 +44,16 @@ export interface Explosion extends Entity {
 
 export interface City extends Entity {
   active: boolean;
+  health: number;
+  maxHealth: number;
 }
 
 export interface Battery extends Entity {
   active: boolean;
   missiles: number;
   maxMissiles: number;
+  health: number;
+  maxHealth: number;
 }
 
 export interface GameState {
@@ -62,4 +66,9 @@ export interface GameState {
   batteries: Battery[];
   level: number;
   trackingMissiles: number;
+  stage: number;
+  stageScore: number;
+  stageLimit: number;
+  isTransitioning: boolean;
+  transitionTimer: number;
 }

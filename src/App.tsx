@@ -23,7 +23,6 @@ import {
   INTERCEPTOR_SPEED, 
   EXPLOSION_MAX_RADIUS, 
   EXPLOSION_DURATION, 
-  WIN_SCORE, 
   ROCKET_SCORE, 
   BATTERY_CONFIGS, 
   CITY_COUNT, 
@@ -39,6 +38,10 @@ export default function App() {
     cities: [] as City[],
     batteries: [] as Battery[],
     trackingMissiles: 0,
+    stage: 1,
+    stageScore: 0,
+    stageLimit: 500,
+    isTransitioning: false,
   });
   const [lang, setLang] = useState<'en' | 'zh'>('zh');
   const t = TRANSLATIONS[lang] as any;
@@ -53,6 +56,10 @@ export default function App() {
     batteries: [],
     level: 1,
     trackingMissiles: 0,
+    stage: 1,
+    stageScore: 0,
+    stageLimit: 500,
+    isTransitioning: false,
   });
 
   const lastSpawnTimeRef = useRef<number>(0);
@@ -64,6 +71,8 @@ export default function App() {
       x: (GAME_WIDTH / (CITY_COUNT + 1)) * (i + 1),
       y: GAME_HEIGHT - 30,
       active: true,
+      health: 4, // Increased from 2
+      maxHealth: 4,
     }));
 
     const batteries: Battery[] = BATTERY_CONFIGS.map((config, i) => ({
@@ -73,6 +82,8 @@ export default function App() {
       active: true,
       missiles: config.maxMissiles,
       maxMissiles: config.maxMissiles,
+      health: 200, // Increased from 100
+      maxHealth: 200,
     }));
 
     const newState: GameState = {
@@ -84,7 +95,12 @@ export default function App() {
       cities,
       batteries,
       level: 1,
-      trackingMissiles: 1,
+      trackingMissiles: 2, // Start with 2
+      stage: 1,
+      stageScore: 0,
+      stageLimit: 500,
+      isTransitioning: false,
+      transitionTimer: 0,
     };
 
     gameRef.current = newState;
@@ -95,16 +111,22 @@ export default function App() {
       status: GameStatus.PLAYING,
       cities,
       batteries,
-      trackingMissiles: 1,
+      trackingMissiles: 2,
+      stage: 1,
+      stageScore: 0,
+      stageLimit: 500,
+      isTransitioning: false,
     });
   }, []);
 
   const starsRef = useRef<{x: number, y: number, size: number, opacity: number}[]>([]);
+  const lastDefenseNetworkTimeRef = useRef<number>(0);
+  const shakeRef = useRef<number>(0);
 
   useEffect(() => {
     // Generate static stars once
     const stars = [];
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < 200; i++) {
       stars.push({
         x: Math.random() * GAME_WIDTH,
         y: Math.random() * GAME_HEIGHT,
@@ -125,12 +147,28 @@ export default function App() {
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
+      ctx.save();
+      // Screen Shake
+      if (shakeRef.current > 0) {
+        const sx = (Math.random() - 0.5) * shakeRef.current;
+        const sy = (Math.random() - 0.5) * shakeRef.current;
+        ctx.translate(sx, sy);
+        shakeRef.current *= 0.9;
+        if (shakeRef.current < 0.1) shakeRef.current = 0;
+      }
+
       // Clear
       ctx.fillStyle = COLORS.BACKGROUND;
       ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
+      // Draw Stars
+      starsRef.current.forEach(s => {
+        ctx.fillStyle = `rgba(255, 255, 255, ${s.opacity * (0.5 + Math.sin(Date.now() / 1000) * 0.5)})`;
+        ctx.fillRect(s.x, s.y, s.size, s.size);
+      });
+
       // Draw Skyline Background
-      ctx.fillStyle = '#1a1a2e';
+      ctx.fillStyle = '#0a0a1a';
       ctx.beginPath();
       ctx.moveTo(0, GAME_HEIGHT);
       ctx.lineTo(0, GAME_HEIGHT - 100);
@@ -154,138 +192,189 @@ export default function App() {
       ctx.closePath();
       ctx.fill();
 
-      // Draw some windows in the background skyline
-      ctx.fillStyle = 'rgba(255, 255, 0, 0.2)';
-      for (let i = 0; i < 800; i += 40) {
-        for (let j = 0; j < 100; j += 20) {
-          if (Math.random() > 0.7) {
-            ctx.fillRect(i + 10, GAME_HEIGHT - 100 + j, 5, 5);
-          }
-        }
-      }
-
-      // Draw Cities
+      // Draw Cities (Futuristic)
       state.cities.forEach(c => {
         if (!c.active) return;
-        ctx.fillStyle = COLORS.CITY;
+        
+        // Building Base
+        ctx.fillStyle = '#1e3a8a';
+        ctx.fillRect(c.x - 20, c.y - 15, 40, 25);
+        
+        // Windows
+        ctx.fillStyle = '#60a5fa';
+        for(let i=0; i<3; i++) {
+          for(let j=0; j<2; j++) {
+            if (Math.random() > 0.2) {
+              ctx.fillRect(c.x - 15 + i*12, c.y - 10 + j*8, 6, 4);
+            }
+          }
+        }
+
+        // Antenna
+        ctx.strokeStyle = '#3b82f6';
+        ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.rect(c.x - 15, c.y - 10, 30, 20);
-        ctx.fill();
-        ctx.fillStyle = '#ffff00';
-        ctx.fillRect(c.x - 10, c.y - 5, 5, 5);
-        ctx.fillRect(c.x + 5, c.y - 5, 5, 5);
+        ctx.moveTo(c.x, c.y - 15);
+        ctx.lineTo(c.x, c.y - 25);
+        ctx.stroke();
+        
+        // Health Bar
+        const healthPercent = c.health / c.maxHealth;
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(c.x - 20, c.y - 35, 40, 4);
+        ctx.fillStyle = healthPercent > 0.5 ? '#10b981' : '#ef4444';
+        ctx.fillRect(c.x - 20, c.y - 35, 40 * healthPercent, 4);
       });
 
-      // Draw Batteries
+      // Draw Batteries (Turrets)
       state.batteries.forEach(b => {
         if (!b.active) return;
-        ctx.fillStyle = COLORS.BATTERY;
+        
+        // Turret Base
+        ctx.fillStyle = '#312e81';
         ctx.beginPath();
-        ctx.moveTo(b.x - 50, b.y + 20);
-        ctx.lineTo(b.x + 50, b.y + 20);
-        ctx.lineTo(b.x, b.y - 40);
-        ctx.closePath();
+        ctx.arc(b.x, b.y + 10, 30, Math.PI, 0);
         ctx.fill();
+        
+        // Turret Head
+        ctx.fillStyle = '#4338ca';
+        ctx.beginPath();
+        ctx.arc(b.x, b.y - 10, 15, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Cannon
+        ctx.strokeStyle = '#4338ca';
+        ctx.lineWidth = 8;
+        ctx.beginPath();
+        ctx.moveTo(b.x, b.y - 10);
+        ctx.lineTo(b.x, b.y - 35);
+        ctx.stroke();
+
         ctx.fillStyle = COLORS.TEXT;
-        ctx.font = '14px Inter';
+        ctx.font = 'bold 16px Inter';
         ctx.textAlign = 'center';
-        ctx.fillText(b.missiles.toString(), b.x, b.y + 40);
+        ctx.fillText(b.missiles.toString(), b.x, b.y + 35);
+
+        // Health Bar
+        const healthPercent = b.health / b.maxHealth;
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(b.x - 40, b.y - 55, 80, 6);
+        ctx.fillStyle = healthPercent > 0.5 ? '#10b981' : (healthPercent > 0.2 ? '#f59e0b' : '#ef4444');
+        ctx.fillRect(b.x - 40, b.y - 55, 80 * healthPercent, 6);
       });
 
-      // Draw Rockets (ICBM Style)
-      state.rockets.forEach(r => {
-        // Trail
-        ctx.strokeStyle = 'rgba(255, 68, 68, 0.4)';
+      // Draw Defense Network Effect (Dome Shield)
+      if (state.rockets.length >= 2) {
+        const gradient = ctx.createRadialGradient(GAME_WIDTH/2, GAME_HEIGHT, 0, GAME_WIDTH/2, GAME_HEIGHT, GAME_WIDTH);
+        gradient.addColorStop(0, 'rgba(0, 255, 255, 0)');
+        gradient.addColorStop(0.8, 'rgba(0, 255, 255, 0.05)');
+        gradient.addColorStop(1, 'rgba(0, 255, 255, 0.2)');
+        
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(GAME_WIDTH/2, GAME_HEIGHT, GAME_WIDTH, Math.PI, 0);
+        ctx.fill();
+        
+        ctx.strokeStyle = 'rgba(0, 255, 255, 0.3)';
         ctx.lineWidth = 2;
+        ctx.setLineDash([20, 20]);
+        ctx.beginPath();
+        ctx.arc(GAME_WIDTH/2, GAME_HEIGHT, GAME_WIDTH - 50, Math.PI, 0);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Draw Alien Mothership / Portals
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.1)';
+      for(let i=0; i<5; i++) {
+        const px = (GAME_WIDTH / 6) * (i + 1);
+        const py = 20;
+        ctx.beginPath();
+        ctx.ellipse(px, py, 40, 10, 0, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = '#00ffff';
+        ctx.fillStyle = '#00ffff';
+        ctx.beginPath();
+        ctx.arc(px, py, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+
+      // Draw Rockets (Alien Plasma Shells)
+      state.rockets.forEach(r => {
+        // Plasma Trail
+        const trailGradient = ctx.createLinearGradient(r.startX, r.startY, r.x, r.y);
+        trailGradient.addColorStop(0, 'rgba(0, 255, 200, 0)');
+        trailGradient.addColorStop(1, 'rgba(0, 255, 200, 0.4)');
+        ctx.strokeStyle = trailGradient;
+        ctx.lineWidth = 3;
         ctx.beginPath();
         ctx.moveTo(r.startX, r.startY);
         ctx.lineTo(r.x, r.y);
         ctx.stroke();
         
-        // ICBM Body
-        const angle = Math.atan2(r.targetY - r.startY, r.targetX - r.startX);
-        ctx.save();
-        ctx.translate(r.x, r.y);
-        ctx.rotate(angle);
-        
-        // Body
-        ctx.fillStyle = '#888888';
-        ctx.fillRect(-15, -4, 20, 8);
-        
-        // Nose cone
-        ctx.fillStyle = '#ff0000';
-        ctx.beginPath();
-        ctx.moveTo(5, -4);
-        ctx.lineTo(15, 0);
-        ctx.lineTo(5, 4);
-        ctx.closePath();
-        ctx.fill();
-        
-        // Fins
-        ctx.fillStyle = '#444444';
-        ctx.beginPath();
-        ctx.moveTo(-15, -4);
-        ctx.lineTo(-20, -8);
-        ctx.lineTo(-10, -4);
-        ctx.closePath();
-        ctx.fill();
-        ctx.beginPath();
-        ctx.moveTo(-15, 4);
-        ctx.lineTo(-20, 8);
-        ctx.lineTo(-10, 4);
-        ctx.closePath();
-        ctx.fill();
-        
-        ctx.restore();
-        
-        // Glow
-        ctx.shadowBlur = 20;
+        // Plasma Core
+        ctx.shadowBlur = 15;
         ctx.shadowColor = COLORS.ROCKET;
+        ctx.fillStyle = '#ffffff';
         ctx.beginPath();
-        ctx.arc(r.x, r.y, 8, 0, Math.PI * 2);
+        ctx.arc(r.x, r.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.fillStyle = COLORS.ROCKET;
+        ctx.beginPath();
+        ctx.arc(r.x, r.y, 10, 0, Math.PI * 2);
         ctx.fill();
         ctx.shadowBlur = 0;
       });
 
-      // Draw Interceptors
+      // Draw Interceptors (Laser Bolts)
       state.interceptors.forEach(i => {
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = i.targetRocketId ? '#ff00ff' : COLORS.INTERCEPTOR;
         ctx.strokeStyle = i.targetRocketId ? '#ff00ff' : COLORS.INTERCEPTOR;
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 4;
         ctx.beginPath();
         ctx.moveTo(i.startX, i.startY);
         ctx.lineTo(i.x, i.y);
         ctx.stroke();
+        ctx.shadowBlur = 0;
 
         if (!i.targetRocketId) {
-          ctx.strokeStyle = '#ffffff';
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+          ctx.setLineDash([2, 2]);
           ctx.beginPath();
-          ctx.moveTo(i.targetX - 5, i.targetY - 5);
-          ctx.lineTo(i.targetX + 5, i.targetY + 5);
-          ctx.moveTo(i.targetX + 5, i.targetY - 5);
-          ctx.lineTo(i.targetX - 5, i.targetY + 5);
+          ctx.arc(i.targetX, i.targetY, 5, 0, Math.PI * 2);
           ctx.stroke();
-        } else {
-          // Draw tracking indicator
-          ctx.strokeStyle = '#ff00ff';
-          ctx.beginPath();
-          ctx.arc(i.targetX, i.targetY, 10, 0, Math.PI * 2);
-          ctx.stroke();
+          ctx.setLineDash([]);
         }
       });
 
-      // Draw Explosions
+      // Draw Explosions (Plasma Bursts)
       state.explosions.forEach(e => {
         const gradient = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.radius);
-        gradient.addColorStop(0, 'white');
-        gradient.addColorStop(0.4, 'yellow');
-        gradient.addColorStop(0.7, 'orange');
-        gradient.addColorStop(1, 'rgba(255, 68, 0, 0)');
+        gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+        gradient.addColorStop(0.2, 'rgba(0, 255, 255, 0.8)');
+        gradient.addColorStop(0.6, 'rgba(0, 100, 255, 0.4)');
+        gradient.addColorStop(1, 'rgba(0, 0, 255, 0)');
         
         ctx.fillStyle = gradient;
         ctx.beginPath();
         ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
         ctx.fill();
+        
+        // Particles
+        ctx.fillStyle = '#ffffff';
+        for(let j=0; j<5; j++) {
+          const px = e.x + (Math.random() - 0.5) * e.radius * 2;
+          const py = e.y + (Math.random() - 0.5) * e.radius * 2;
+          ctx.fillRect(px, py, 2, 2);
+        }
       });
+
+      ctx.restore();
     };
 
     const update = () => {
@@ -296,18 +385,44 @@ export default function App() {
         return;
       }
 
+      // Handle Transition Timer
+      if (state.transitionTimer > 0) {
+        const nextState = { 
+          ...state, 
+          transitionTimer: state.transitionTimer - 1,
+          isTransitioning: state.transitionTimer > 1
+        };
+        gameRef.current = nextState;
+        draw(nextState);
+        
+        if (nextState.transitionTimer === 0) {
+          setUiState(prev => ({ ...prev, isTransitioning: false }));
+        }
+        
+        animationFrameId = requestAnimationFrame(update);
+        return;
+      }
+
       const now = Date.now();
       const nextState = { ...state };
 
-      // 0. Award tracking missiles every 10s
-      if (now - lastTrackingAwardTimeRef.current > 10000) {
+      // 0. Award tracking missiles every 8s (Faster award for 6th grader)
+      if (now - lastTrackingAwardTimeRef.current > 8000) {
         nextState.trackingMissiles += 1;
         lastTrackingAwardTimeRef.current = now;
       }
 
+      // 0.1 Defense Network Mechanic (Easier trigger: only 2 rockets needed)
+      if (state.rockets.length >= 2 && now - lastDefenseNetworkTimeRef.current > 4000) {
+        nextState.batteries = nextState.batteries.map(b => 
+          b.active ? { ...b, missiles: b.missiles + 25 } : b
+        );
+        lastDefenseNetworkTimeRef.current = now;
+      }
+
       // 1. Spawn rockets
-      const spawnInterval = 3000 / (1 + state.score / 500);
-      if (now - lastSpawnTimeRef.current > spawnInterval) {
+      const spawnInterval = 3500 / (1 + state.score / 600); // Slightly slower spawn
+      if (now - lastSpawnTimeRef.current > spawnInterval && state.rockets.length < 5) {
         const id = Math.random().toString(36).substr(2, 9);
         const startX = Math.random() * GAME_WIDTH;
         const targetX = Math.random() * GAME_WIDTH;
@@ -316,9 +431,9 @@ export default function App() {
         const newRocket: Rocket = {
           id,
           startX,
-          startY: 0,
+          startY: 20, // Spawn from portals
           x: startX,
-          y: 0,
+          y: 20,
           targetX,
           targetY: GAME_HEIGHT,
           speed,
@@ -338,14 +453,21 @@ export default function App() {
         return { ...r, progress, x, y };
       }).filter(r => {
         if (r.progress >= 1) {
+          shakeRef.current = 15; // Impact shake
           nextState.cities = nextState.cities.map(c => {
             const dist = Math.abs(c.x - r.targetX);
-            if (dist < 30) return { ...c, active: false };
+            if (dist < 30) {
+              const newHealth = Math.max(0, c.health - 1);
+              return { ...c, health: newHealth, active: newHealth > 0 };
+            }
             return c;
           });
           nextState.batteries = nextState.batteries.map(b => {
             const dist = Math.abs(b.x - r.targetX);
-            if (dist < 80) return { ...b, active: false };
+            if (dist < 80) {
+              const newHealth = Math.max(0, b.health - 1);
+              return { ...b, health: newHealth, active: newHealth > 0 };
+            }
             return b;
           });
           nextState.explosions = [...nextState.explosions, {
@@ -353,7 +475,7 @@ export default function App() {
             x: r.targetX,
             y: r.targetY,
             radius: 0,
-            maxRadius: EXPLOSION_MAX_RADIUS,
+            maxRadius: EXPLOSION_MAX_RADIUS * 1.5,
             duration: EXPLOSION_DURATION,
             elapsed: 0,
           }];
@@ -418,25 +540,59 @@ export default function App() {
         return !hit;
       });
       const rocketsAfter = nextState.rockets.length;
-      nextState.score += (rocketsBefore - rocketsAfter) * ROCKET_SCORE;
+      const destroyedCount = rocketsBefore - rocketsAfter;
+      const pointsEarned = destroyedCount * ROCKET_SCORE;
+      
+      nextState.score += pointsEarned;
+      if (!nextState.isTransitioning) {
+        nextState.stageScore += pointsEarned;
+      }
 
-      // 6. Check Win/Loss
-      if (nextState.score >= WIN_SCORE) {
+      // 6. Stage Transitions
+      if (!nextState.isTransitioning) {
+        if (nextState.stage === 1 && nextState.score >= 500) {
+          nextState.isTransitioning = true;
+          nextState.transitionTimer = 180; // ~3 seconds
+          nextState.stage = 2;
+          nextState.stageScore = 0;
+          nextState.stageLimit = 1000;
+        } else if (nextState.stage >= 2 && nextState.stage < 5 && nextState.stageScore >= nextState.stageLimit) {
+          nextState.isTransitioning = true;
+          nextState.transitionTimer = 180; // ~3 seconds
+          nextState.stage += 1;
+          nextState.stageScore = 0;
+          nextState.stageLimit += 50;
+        }
+      }
+
+      // 7. Check Win/Loss
+      if (nextState.stage === 5 && nextState.stageScore >= nextState.stageLimit) {
         nextState.status = GameStatus.WON;
-      } else if (nextState.batteries.every(b => !b.active)) {
+      }
+      
+      if (nextState.batteries.every(b => !b.active)) {
         nextState.status = GameStatus.LOST;
       }
 
       gameRef.current = nextState;
       
       // Sync UI state occasionally or on important changes
-      if (nextState.score !== state.score || nextState.status !== state.status || nextState.trackingMissiles !== state.trackingMissiles) {
+      if (nextState.score !== state.score || 
+          nextState.status !== state.status || 
+          nextState.trackingMissiles !== state.trackingMissiles ||
+          nextState.stage !== state.stage ||
+          nextState.stageScore !== state.stageScore ||
+          nextState.isTransitioning !== state.isTransitioning) {
         setUiState({
           score: nextState.score,
           status: nextState.status,
           cities: nextState.cities,
           batteries: nextState.batteries,
           trackingMissiles: nextState.trackingMissiles,
+          stage: nextState.stage,
+          stageScore: nextState.stageScore,
+          stageLimit: nextState.stageLimit,
+          isTransitioning: nextState.isTransitioning,
         });
       }
 
@@ -450,7 +606,7 @@ export default function App() {
 
   const handleCanvasClick = (e: React.MouseEvent | React.TouchEvent) => {
     const state = gameRef.current;
-    if (state.status !== GameStatus.PLAYING) return;
+    if (state.status !== GameStatus.PLAYING || state.isTransitioning) return;
 
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -509,7 +665,7 @@ export default function App() {
 
   const fireTrackingMissile = () => {
     const state = gameRef.current;
-    if (state.status !== GameStatus.PLAYING || state.trackingMissiles <= 0) return;
+    if (state.status !== GameStatus.PLAYING || state.trackingMissiles <= 0 || state.isTransitioning) return;
     if (state.rockets.length === 0) return;
 
     // Find closest rocket to any active battery
@@ -587,8 +743,43 @@ export default function App() {
         </div>
       </div>
 
+      {/* Stage Progress Bar */}
+      <div className="w-full max-w-[800px] mb-4">
+        <div className="flex justify-between items-end mb-1">
+          <span className="text-xs font-bold uppercase tracking-widest text-white/50">
+            {t.stage} {uiState.stage}
+          </span>
+          <span className="text-xs font-mono text-white/50">
+            {uiState.stageScore} / {uiState.stageLimit}
+          </span>
+        </div>
+        <div className="h-2 w-full bg-white/5 rounded-full overflow-hidden border border-white/10">
+          <motion.div 
+            className="h-full bg-gradient-to-r from-blue-500 to-cyan-400"
+            initial={{ width: 0 }}
+            animate={{ width: `${(uiState.stageScore / uiState.stageLimit) * 100}%` }}
+            transition={{ type: 'spring', bounce: 0, duration: 0.5 }}
+          />
+        </div>
+      </div>
+
       {/* Game Container */}
       <div className="relative w-full max-w-[800px] aspect-[4/3] bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/10">
+        {/* Defense Network Notification (Overlay) */}
+        <AnimatePresence>
+          {uiState.status === GameStatus.PLAYING && gameRef.current.rockets.length >= 2 && (
+            <motion.div
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="absolute top-4 left-1/2 -translate-x-1/2 z-40 px-4 py-2 bg-cyan-500/20 border border-cyan-500/50 rounded-lg text-cyan-400 text-sm font-bold flex items-center gap-2 backdrop-blur-md"
+            >
+              <Shield size={16} className="animate-pulse" />
+              {t.defenseNetwork}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <canvas
           ref={canvasRef}
           width={GAME_WIDTH}
@@ -597,6 +788,29 @@ export default function App() {
           onTouchStart={handleCanvasClick}
           className="w-full h-full cursor-crosshair touch-none"
         />
+
+        {/* Stage Transition Overlay */}
+        <AnimatePresence>
+          {uiState.isTransitioning && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm"
+            >
+              <motion.div
+                initial={{ scale: 0.8, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                className="text-center"
+              >
+                <h2 className="text-4xl md:text-6xl font-black italic uppercase tracking-tighter text-cyan-400 mb-2">
+                  {t.stageTransition.replace('{n}', uiState.stage.toString())}
+                </h2>
+                <div className="h-1 w-24 bg-cyan-500 mx-auto rounded-full animate-pulse" />
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Overlays */}
         <AnimatePresence>
